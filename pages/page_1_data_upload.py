@@ -9,7 +9,7 @@ from app.processing.normalization import zscore, minmax
 
 
 def upload_data() -> DataFrame  | None:
-    uploaded = st.file_uploader("Upload your time series file:", type=["csv", "txt"])
+    uploaded = st.file_uploader("Upload your time series file:", type=["csv"])
     if uploaded:
         try:
             df = pd.read_csv(uploaded)
@@ -59,7 +59,7 @@ def normalize_signals(df, y_cols):
 def plot_signals(df_plot, time_col, y_cols) -> None:
     if y_cols:
         fig = px.line(df_plot, x=time_col, y=y_cols, title="Time Series Signals")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='content')
     else:
         st.info("Please select at least one signal to plot.")
 
