@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Iterable
 
 import numpy as np
 
@@ -9,20 +10,29 @@ class BaseModel(ABC):
     def predict(self, x):
         pass
 
-
     @abstractmethod
     def preprocess(self, x):
         pass
+
+    # TODO: These methods can be used for further implementation -- kwargs - for learning rate, epochs etc....
+    def fit(self, X, y, **kwargs) -> None:
+        raise NotImplemented("You need to implement this method")
+
+    def update(self, x, target, **kwargs) -> None:
+        raise NotImplementedError("You need to implement this method.")
+
+    def reset_weights(self) -> None:
+        raise NotImplementedError("You need to implement this method.")
 
 
 
 class HONU(BaseModel):
 
     def __init__(self, degree: int):
-        if degree not in [1,2,3]:
+        if degree not in [1, 2, 3]:
             raise ValueError('Degree must be between 1 to 3')
         self.degree = degree
-        self.weights = None # TODO by 2. and 3. person
+        self.weights = None  # TODO by 2. and 3. person
 
     def preprocess(self, x):
         x = np.asarray(x).flatten()
@@ -54,8 +64,6 @@ class HONU(BaseModel):
         return float(np.dot(self.weights, phi))
 
 
-
-
 class MLP(BaseModel):
 
     def __init__(self, layers: int, neurons: int, activation: str):
@@ -63,7 +71,7 @@ class MLP(BaseModel):
             raise ValueError("Must be at least 1 hidden layer.")
         if neurons < 1:
             raise ValueError("Neuron count must be positive.")
-        if activation not in ['relu', 'sigmoid','tanh']:
+        if activation not in ['relu', 'sigmoid', 'tanh']:
             raise ValueError("Activation must be 'relu', 'sigmoid' or 'tanh'.")
         self.layers = layers
         self.neurons = neurons
