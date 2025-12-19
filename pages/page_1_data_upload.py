@@ -92,5 +92,6 @@ def main():
         st.info("Upload a CSV or TXT file with time series.")
 
 
+
 if __name__ == "__main__":
     main()
