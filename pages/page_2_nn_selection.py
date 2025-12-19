@@ -11,83 +11,100 @@ def select_model():
         st.warning("Please select at least one signal in Step 1 first.")
         return
 
-    st.subheader("Select Target Signal (Output)")
-    output_signal = st.selectbox("Choose signal to predict:", st.session_state['y_cols'])
-    st.session_state['output_signal'] = output_signal
-
-
-    input_signals = [s for s in st.session_state['y_cols'] if s != output_signal]
-    st.session_state['input_signals'] = input_signals
-
-
     df = st.session_state['raw_data']
-    X_data = df[input_signals].to_numpy()
-    y_data = df[output_signal].to_numpy()
-    t = np.arange(len(y_data))
-    n_inputs = X_data.shape[1]
+    y_cols = st.session_state['y_cols']
+    lags = st.session_state['lags']
+
+
+    target_signal = st.selectbox("Which signal do you want to predict?", y_cols)
+    st.session_state['target_signal'] = target_signal
+
+    max_lag = max(lags.values())
+    N = len(df)
+
+    def build_input_vector(k):
+        x_vec = []
+        for col in y_cols:
+            if col == target_signal:
+                continue
+            lag = lags[col]
+
+            x_vec.extend(df[col].values[k-lag:k])
+        return np.array(x_vec)
 
     model_type = st.selectbox("Select Model:", ["HONU", "SlidingHONU"])
     st.session_state['model_type'] = model_type
 
+    # --- HONU ---
     if model_type == "HONU":
-        degree = st.slider("Polynomial degree (1-3):", 1, 3, 1)
+        degree = st.slider("Polynomial degree (1-3):", min_value=1, max_value=3, value=1)
         method = st.selectbox("Learning method:", ["LMS", "NGD"])
-        mu = st.slider("Learning rate μ:", 0.0001, 0.01, 0.01, step=0.0001, format="%.4f")
+        mu = st.slider("Learning rate μ:", min_value=0.0001, max_value=0.01, value=0.001, step=0.0001, format="%.4f")
 
         st.session_state['degree'] = degree
         st.session_state['method'] = method
         st.session_state['mu'] = mu
 
+        n_inputs = sum(lags[col] for col in y_cols if col != target_signal)
         model = HONU(degree=degree, n_inputs=n_inputs, mu=mu, l_method=method)
         st.session_state['model'] = model
 
-        y_pred = np.zeros(len(y_data))
-        error = np.zeros(len(y_data))
-        wall = np.zeros((len(y_data), model.n_weights))
-        delta_wall = np.zeros((len(y_data), model.n_weights))
+        y_pred = np.zeros(N)
+        error = np.zeros(N)
+        wall = np.zeros((N, model.n_weights))
+        delta_wall = np.zeros((N, model.n_weights))
 
-        for k in range(n_inputs, len(y_data)):
-            x = X_data[k, :]
+        for k in range(max_lag, N):
+            x = build_input_vector(k)
             y_pred[k] = model.predict(x)
-            e = model.update(x, y_data[k])
+            e = model.update(x, df[target_signal].values[k])
             error[k] = e
-            delta_w = model.w - wall[k - 1] if k > 0 else model.w
+            delta_w = model.w - wall[k-1] if k > 0 else model.w
             wall[k] = model.w
             delta_wall[k] = delta_w
 
-        fig = plot_honu_plotly(t, y_data, y_pred, error, wall, delta_wall, title=f"HONU ({method})")
+        st.session_state['wall'] = wall
+        st.session_state['delta_wall'] = delta_wall
+        st.session_state['error'] = error
+
+        fig = plot_honu_plotly(np.arange(N), df[target_signal].values, y_pred, error, wall, delta_wall,
+                               title=f"Online {method} prediction")
         st.plotly_chart(fig, use_container_width=True)
-        st.write(f"HONU model initialized: degree={degree}, method={method}, μ={mu}")
 
     elif model_type == "SlidingHONU":
-        degree = st.slider("Polynomial degree (1-3):", 1, 3, 1)
-        window_size = st.slider("Sliding window size M:", 10, 200, 50, step=10)
-        lam = st.slider("Regularization λ:", 0.0, 0.1, 0.01, step=0.001, format="%.3f")
+        degree = st.slider("Polynomial degree (1-3):", min_value=1, max_value=3, value=1)
+        window_size = st.slider("Sliding window size M:", min_value=10, max_value=200, value=50, step=10)
+        lam = st.slider("Regularization λ:", min_value=0.0, max_value=0.1, value=0.01, step=0.001, format="%.3f")
 
         st.session_state['degree'] = degree
         st.session_state['window_size'] = window_size
         st.session_state['lam'] = lam
 
+        n_inputs = sum(lags[col] for col in y_cols if col != target_signal)
         model = SlidingHONU(degree=degree, n_inputs=n_inputs, window_size=window_size, lam=lam)
         st.session_state['model'] = model
 
-        y_pred = np.zeros(len(y_data))
-        error = np.zeros(len(y_data))
-        wall = np.zeros((len(y_data), model.n_weights))
-        delta_wall = np.zeros((len(y_data), model.n_weights))
+        y_pred = np.zeros(N)
+        error = np.zeros(N)
+        wall = np.zeros((N, model.n_weights))
+        delta_wall = np.zeros((N, model.n_weights))
 
-        for k in range(n_inputs, len(y_data)):
-            x = X_data[k,:].flatten()
-            model.add_sample(x, y_data[k])
+        for k in range(max_lag, N):
+            x = build_input_vector(k)
+            model.add_sample(x, df[target_signal].values[k])
             y_pred[k] = model.predict(x)
             err, delta_w = model.update_LM()
             error[k] = err
             wall[k] = model.w
             delta_wall[k] = delta_w
 
-        fig = plot_honu_plotly(t, y_data, y_pred, error, wall, delta_wall, title="Sliding-batch HONU")
+        st.session_state['wall'] = wall
+        st.session_state['delta_wall'] = delta_wall
+        st.session_state['error'] = error
+
+        fig = plot_honu_plotly(np.arange(N), df[target_signal].values, y_pred, error, wall, delta_wall,
+                               title=f"Sliding-batch LM prediction")
         st.plotly_chart(fig, use_container_width=True)
-        st.write(f"Sliding-batch HONU initialized: degree={degree}, M={window_size}, λ={lam}")
 
 
 def plot_honu_plotly(t, y, y_pred, error, wall, delta_wall, title="HONU"):
@@ -109,27 +126,19 @@ def plot_honu_plotly(t, y, y_pred, error, wall, delta_wall, title="HONU"):
 
     fig.add_trace(go.Scatter(x=t, y=np.sum(delta_wall**2, axis=1), mode='lines', name="Σ(Δw²)", line=dict(color='purple')), row=4, col=1)
 
-    fig.update_layout(
-        height=1200,
-        width=1400,
-        title_text=title,
-        showlegend=True,
-        xaxis2=dict(matches='x'),
-        xaxis3=dict(matches='x'),
-        xaxis4=dict(matches='x')
-    )
-
-    fig.update_layout(height=900, width=1000, title_text=title, showlegend=True)
-    fig.update_xaxes(title_text="Samples [k]", row=4, col=1)
+    fig.update_layout(height=1000, width=1200, title_text=title, showlegend=True)
+    fig.update_xaxes(title_text="Samples [k]", row=4, col=1, rangeslider_visible=True)
     fig.update_yaxes(title_text="Amplitude", row=1, col=1)
     fig.update_yaxes(title_text="Error", row=2, col=1)
     fig.update_yaxes(title_text="Weight Value", row=3, col=1)
     fig.update_yaxes(title_text="Sum of Δw²", row=4, col=1)
     return fig
 
+
 def main():
     select_model()
     st.info("Model parameters are stored in session_state and ready for training.")
+
 
 if __name__ == "__main__":
     main()

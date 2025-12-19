@@ -4,6 +4,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from pandas import DataFrame
+from sklearn.decomposition import PCA
 
 from app.processing.normalization import zscore, minmax
 
@@ -20,7 +21,7 @@ def upload_data() -> DataFrame  | None:
     return None
 
 
-def select_columns(df: DataFrame) -> tuple[Any, list, dict] | None:
+def select_columns(df: DataFrame) -> tuple[Any, list, dict]:
     st.subheader("Select Time Column (X)")
     time_col = st.selectbox("Choose the time column:", df.columns)
 
@@ -39,7 +40,8 @@ def select_columns(df: DataFrame) -> tuple[Any, list, dict] | None:
     return time_col, y_cols, lags
 
 
-def normalize_signals(df, y_cols):
+
+def normalize_signals(df: DataFrame, y_cols: list[str]) -> tuple[DataFrame, str]:
     st.subheader("Optional Signal Normalization")
     scale_mode = st.radio(
         "Choose normalization method:",
@@ -54,9 +56,22 @@ def normalize_signals(df, y_cols):
         elif scale_mode == "Min-Max":
             for col in y_cols:
                 df_plot[col] = minmax(df[col])
+
     return df_plot, scale_mode
 
-def plot_signals(df_plot, time_col, y_cols) -> None:
+
+def build_embedding(df: DataFrame, y_cols: list[str], lags: dict[str, int]) -> DataFrame:
+    embedded = pd.DataFrame(index=df.index)
+
+    for col in y_cols:
+        for lag in range(lags[col] + 1):
+            embedded[f"{col}_t-{lag}"] = df[col].shift(lag)
+
+    embedded = embedded.dropna()
+    return embedded
+
+
+def plot_signals(df_plot: DataFrame, time_col: str, y_cols: list[str]) -> None:
     if y_cols:
         fig = px.line(df_plot, x=time_col, y=y_cols, title="Time Series Signals")
         st.plotly_chart(fig, width='content')
@@ -64,33 +79,75 @@ def plot_signals(df_plot, time_col, y_cols) -> None:
         st.info("Please select at least one signal to plot.")
 
 
-def show_statistics(df, y_cols):
+def show_statistics(df: DataFrame, y_cols: list[str]) -> None:
     if y_cols:
         st.subheader("Basic Statistics")
         st.dataframe(df[y_cols].describe())
+
         st.subheader("Correlation Matrix")
-        corr = df[y_cols].corr()
-        st.dataframe(corr)
+        st.dataframe(df[y_cols].corr())
+
 
 def main():
-    st.title("1) Load Data")
+    st.title("1) Load Data & Embedding")
 
     df = upload_data()
-    if df is not None:
-        st.write("Preview of the first 10 rows:")
-        st.dataframe(df.head(10))
+    if df is None:
+        st.info("Upload a CSV file with time series.")
+        return
 
-        time_col, y_cols, lags = select_columns(df)
-        df_plot, scale_mode = normalize_signals(df, y_cols)
-        plot_signals(df_plot, time_col, y_cols)
-        show_statistics(df_plot, y_cols)
+    st.write("Preview of the first 10 rows:")
+    st.dataframe(df.head(10))
+
+    time_col, y_cols, lags = select_columns(df)
+    df_plot, scale_mode = normalize_signals(df, y_cols)
+
+    plot_signals(df_plot, time_col, y_cols)
+    show_statistics(df_plot, y_cols)
+
+
+    if y_cols:
+        st.subheader("Embedding Construction")
+        X_embed = build_embedding(df_plot, y_cols, lags)
+
+        st.write(f"Embedding shape: {X_embed.shape}")
+        st.dataframe(X_embed.head())
+
+        st.session_state['X_embed'] = X_embed
+
+        st.subheader("PCA / Dimensionality Reduction")
+        use_pca = st.checkbox("Apply PCA to embedding")
+
+        if use_pca:
+            max_components = min(X_embed.shape[1], 20)
+            n_components = st.slider(
+                "Number of principal components",
+                1, max_components, min(5, max_components)
+            )
+
+            pca = PCA(n_components=n_components)
+            X_pca = pca.fit_transform(X_embed)
+
+            df_pca = pd.DataFrame(
+                X_pca,
+                index=X_embed.index,
+                columns=[f"PC{i+1}" for i in range(n_components)]
+            )
+
+            st.write("Explained variance ratio:")
+            st.write(pca.explained_variance_ratio_)
+
+            st.dataframe(df_pca.head())
+
+            st.session_state['X_model'] = df_pca
+        else:
+            st.session_state['X_model'] = X_embed
+
 
         st.session_state['time_col'] = time_col
         st.session_state['y_cols'] = y_cols
         st.session_state['lags'] = lags
-    else:
-        st.info("Upload a CSV or TXT file with time series.")
-
+        st.session_state['scale_mode'] = scale_mode
 
 
 if __name__ == "__main__":
