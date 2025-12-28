@@ -1,10 +1,10 @@
 from typing import Any
 
+import numpy as np
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 from pandas import DataFrame
-from sklearn.decomposition import PCA
 
 from app.processing.normalization import zscore, minmax
 
@@ -87,6 +87,16 @@ def show_statistics(df: DataFrame, y_cols: list[str]) -> None:
         st.subheader("Correlation Matrix")
         st.dataframe(df[y_cols].corr())
 
+def manual_pca(x_embed: DataFrame, number_components: int)-> DataFrame:
+
+    covX = np.corrcoef(x_embed.values.T)
+    d, v = np.linalg.eig(covX)
+    idx = np.argsort(d)[::-1]
+    v_m = v[:, idx[:number_components]]
+    X_pca = x_embed.values @ v_m
+
+    return pd.DataFrame(X_pca, index=x_embed.index, columns=[f"PCA{i+1}" for i in range(number_components)])
+
 
 def main():
     st.title("1) Load Data & Embedding")
@@ -125,17 +135,7 @@ def main():
                 1, max_components, min(5, max_components)
             )
 
-            pca = PCA(n_components=n_components)
-            X_pca = pca.fit_transform(X_embed)
-
-            df_pca = pd.DataFrame(
-                X_pca,
-                index=X_embed.index,
-                columns=[f"PC{i+1}" for i in range(n_components)]
-            )
-
-            st.write("Explained variance ratio:")
-            st.write(pca.explained_variance_ratio_)
+            df_pca = manual_pca(x_embed=X_embed, number_components=n_components)
 
             st.dataframe(df_pca.head())
 
