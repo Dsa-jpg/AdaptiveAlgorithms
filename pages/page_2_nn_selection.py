@@ -4,6 +4,9 @@ from app.core.model import HONU, SlidingHONU
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from app.utils.eta import ETAEstimator, format_eta
+
+
 def select_model():
     st.title("2) Model Selection")
 
@@ -14,7 +17,6 @@ def select_model():
     df = st.session_state['raw_data']
     y_cols = st.session_state['y_cols']
     lags = st.session_state['lags']
-
 
     target_signal = st.selectbox("Which signal do you want to predict?", y_cols)
     st.session_state['target_signal'] = target_signal
@@ -28,83 +30,106 @@ def select_model():
             if col == target_signal:
                 continue
             lag = lags[col]
-
             x_vec.extend(df[col].values[k-lag:k])
         return np.array(x_vec)
 
     model_type = st.selectbox("Select Model:", ["HONU", "SlidingHONU"])
     st.session_state['model_type'] = model_type
 
-    # --- HONU ---
+    # ----------------- STOP / RESUME -----------------
+    col1, col2 = st.columns(2)
+    with col1:
+        stop_training = st.button("🛑 Stop training")
+    with col2:
+        resume_training = st.button("▶️ Resume training")
+
+    progress = st.progress(0.0)
+    status = st.empty()
+
     if model_type == "HONU":
-        degree = st.slider("Polynomial degree (1-3):", min_value=1, max_value=3, value=1)
-        method = st.selectbox("Learning method:", ["LMS", "NGD"])
-        mu = st.slider("Learning rate μ:", min_value=0.0001, max_value=0.01, value=0.001, step=0.0001, format="%.4f")
-
-        st.session_state['degree'] = degree
-        st.session_state['method'] = method
-        st.session_state['mu'] = mu
+        degree = st.slider("Polynomial degree (1-3):", 1, 3, 1)
+        method = st.selectbox("Learning method:", ["LMS", "NGD", "RLS"])
+        mu = st.slider("Learning rate μ:", 0.0001, 0.01, 0.001, 0.0001, format="%.4f")
 
         n_inputs = sum(lags[col] for col in y_cols if col != target_signal)
-        model = HONU(degree=degree, n_inputs=n_inputs, mu=mu, l_method=method)
-        st.session_state['model'] = model
+        model = HONU(degree, n_inputs, mu, method)
 
-        y_pred = np.zeros(N)
-        error = np.zeros(N)
-        wall = np.zeros((N, model.n_weights))
-        delta_wall = np.zeros((N, model.n_weights))
-
-        for k in range(max_lag, N):
-            x = build_input_vector(k)
-            y_pred[k] = model.predict(x)
-            e = model.update(x, df[target_signal].values[k])
-            error[k] = e
-            delta_w = model.w - wall[k-1] if k > 0 else model.w
-            wall[k] = model.w
-            delta_wall[k] = delta_w
-
-        st.session_state['wall'] = wall
-        st.session_state['delta_wall'] = delta_wall
-        st.session_state['error'] = error
-
-        fig = plot_honu_plotly(np.arange(N), df[target_signal].values, y_pred, error, wall, delta_wall,
-                               title=f"Online {method} prediction")
-        st.plotly_chart(fig, use_container_width=True)
-
-    elif model_type == "SlidingHONU":
-        degree = st.slider("Polynomial degree (1-3):", min_value=1, max_value=3, value=1)
-        window_size = st.slider("Sliding window size M:", min_value=10, max_value=200, value=50, step=10)
-        lam = st.slider("Regularization λ:", min_value=0.0, max_value=0.1, value=0.01, step=0.001, format="%.3f")
-
-        st.session_state['degree'] = degree
-        st.session_state['window_size'] = window_size
-        st.session_state['lam'] = lam
+    else:
+        degree = st.slider("Polynomial degree (1-3):", 1, 3, 1)
+        window_size = st.slider("Sliding window size M:", 10, 200, 50, 10)
+        lam = st.slider("Regularization λ:", 0.0, 0.1, 0.01, 0.001, format="%.3f")
 
         n_inputs = sum(lags[col] for col in y_cols if col != target_signal)
-        model = SlidingHONU(degree=degree, n_inputs=n_inputs, window_size=window_size, lam=lam)
-        st.session_state['model'] = model
+        model = SlidingHONU(degree, n_inputs, window_size, lam)
 
-        y_pred = np.zeros(N)
-        error = np.zeros(N)
-        wall = np.zeros((N, model.n_weights))
-        delta_wall = np.zeros((N, model.n_weights))
+    st.session_state['model'] = model
 
-        for k in range(max_lag, N):
+
+    if "train_k" not in st.session_state or not resume_training:
+        st.session_state.train_k = max_lag
+
+    start_k = st.session_state.train_k
+    y_pred = np.zeros(N)
+    error = np.zeros(N)
+    wall = np.zeros((N, model.n_weights))
+    delta_wall = np.zeros((N, model.n_weights))
+    errors_list = []
+    eta_est = ETAEstimator()
+
+    LM_STEP = 10
+
+
+    with st.spinner("Training model..."):
+        for k in range(start_k, N):
+            eta_est.tick()
+
+            if stop_training:
+                st.session_state.train_k = k
+                st.session_state.model = model
+                st.warning(f"Training paused at step {k}")
+                break
+
             x = build_input_vector(k)
-            model.add_sample(x, df[target_signal].values[k])
+
+            if model_type == "HONU":
+                err = model.update(x, df[target_signal].values[k])
+            else:  # SlidingHONU
+                model.add_sample(x, df[target_signal].values[k])
+                if k % LM_STEP == 0:
+                    err, delta_w = model.update_LM()
+                else:
+                    err = error[k-1] if k > 0 else 0
+
             y_pred[k] = model.predict(x)
-            err, delta_w = model.update_LM()
             error[k] = err
+            errors_list.append(err)
+
             wall[k] = model.w
-            delta_wall[k] = delta_w
+            if model_type == "HONU":
+                delta_wall[k] = model.w - wall[k-1] if k>0 else model.w
+            else:
+                delta_wall[k] = delta_w if k % LM_STEP == 0 else delta_wall[k-1] if k>0 else np.zeros(model.n_weights)
 
-        st.session_state['wall'] = wall
-        st.session_state['delta_wall'] = delta_wall
-        st.session_state['error'] = error
+            if k % 10 == 0:
+                eta_val = eta_est.eta(N - k)
+                progress.progress(k / (N - 1))
+                status.text(f"{model_type} step {k}/{N} | ETA: {format_eta(eta_val)}")
 
-        fig = plot_honu_plotly(np.arange(N), df[target_signal].values, y_pred, error, wall, delta_wall,
-                               title=f"Sliding-batch LM prediction")
-        st.plotly_chart(fig, use_container_width=True)
+    st.session_state['wall'] = wall
+    st.session_state['delta_wall'] = delta_wall
+    st.session_state['error'] = error
+
+    fig = plot_honu_plotly(
+        np.arange(N),
+        df[target_signal].values,
+        y_pred,
+        error,
+        wall,
+        delta_wall,
+        title=f"{model_type} prediction ({method if model_type=='HONU' else 'Sliding LM'})"
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
 
 
 def plot_honu_plotly(t, y, y_pred, error, wall, delta_wall, title="HONU"):

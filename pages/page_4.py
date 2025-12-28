@@ -61,7 +61,7 @@ def saliency_maps_page():
         aspect="auto",
         title=f"Saliency Map for {target_signal} (abs(∂y/∂x))"
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     st.info(
         "Horizontal axis: time steps\n"
