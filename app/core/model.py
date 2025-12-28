@@ -100,3 +100,78 @@ class SlidingHONU(BaseHONU):
 
         error = y - X @ self.w
         return np.mean(error**2), self.w - w_old
+
+class SimpleMLP:
+    def __init__(self, layer_sizes, activations=None, lr=0.01):
+
+        self.layer_sizes = layer_sizes
+        self.lr = lr
+        self.n_layers = len(layer_sizes) - 1
+
+        if activations is None:
+            activations = ['relu'] * (self.n_layers - 1) + ['linear']
+        self.activations = activations
+
+
+        self.weights = [np.random.randn(layer_sizes[i], layer_sizes[i + 1]) * np.sqrt(2 / layer_sizes[i])
+                        for i in range(self.n_layers)]
+        self.biases = [np.zeros(layer_sizes[i + 1]) for i in range(self.n_layers)]
+
+    def _activate(self, x, func):
+        if func == 'relu':
+            return np.maximum(0, x)
+        elif func == 'sigmoid':
+            return 1 / (1 + np.exp(-x))
+        elif func == 'tanh':
+            return np.tanh(x)
+        elif func == 'linear':
+            return x
+        else:
+            raise ValueError(f"Unknown activation {func}")
+
+    def _activate_derivative(self, x, func):
+        if func == 'relu':
+            return (x > 0).astype(float)
+        elif func == 'sigmoid':
+            s = 1 / (1 + np.exp(-x))
+            return s * (1 - s)
+        elif func == 'tanh':
+            return 1 - np.tanh(x) ** 2
+        elif func == 'linear':
+            return np.ones_like(x)
+        else:
+            raise ValueError(f"Unknown activation {func}")
+
+    def forward(self, x):
+        self.zs = []
+        self.ys = [x]
+        for w, b, act in zip(self.weights, self.biases, self.activations):
+            z = self.ys[-1] @ w + b
+            y = self._activate(z, act)
+            self.zs.append(z)
+            self.ys.append(y)
+        return self.ys[-1]
+
+    def backward(self, y_true):
+        grad_w = [None] * self.n_layers
+        grad_b = [None] * self.n_layers
+
+
+        delta = (self.ys[-1] - y_true) * self._activate_derivative(self.zs[-1], self.activations[-1])
+
+        for l in reversed(range(self.n_layers)):
+            grad_w[l] = self.ys[l].T @ delta
+            grad_b[l] = np.sum(delta, axis=0)
+            if l > 0:
+                delta = (delta @ self.weights[l].T) * self._activate_derivative(self.zs[l - 1], self.activations[l - 1])
+
+
+        for l in range(self.n_layers):
+            self.weights[l] -= self.lr * grad_w[l]
+            self.biases[l] -= self.lr * grad_b[l]
+
+        return np.mean((self.ys[-1] - y_true) ** 2)
+
+    def predict(self, x):
+        return self.forward(x)
+
