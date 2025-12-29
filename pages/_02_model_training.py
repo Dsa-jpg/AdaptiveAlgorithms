@@ -1,11 +1,10 @@
 import numpy as np
 import streamlit as st
-from app.core.model import HONU, SlidingHONU
+from app.core.model import HONU, SlidingHONU, SimpleMLP
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from app.utils.eta import ETAEstimator, format_eta
-
 
 def select_model():
     st.title("2) Model Selection")
@@ -31,9 +30,9 @@ def select_model():
                 continue
             lag = lags[col]
             x_vec.extend(df[col].values[k-lag:k])
-        return np.array(x_vec)
+        return np.array(x_vec).reshape(1, -1)  # reshape for MLP
 
-    model_type = st.selectbox("Select Model:", ["HONU", "SlidingHONU"])
+    model_type = st.selectbox("Select Model:", ["HONU", "SlidingHONU", "MLP"])
     st.session_state['model_type'] = model_type
 
     # ----------------- STOP / RESUME -----------------
@@ -46,24 +45,26 @@ def select_model():
     progress = st.progress(0.0)
     status = st.empty()
 
+    n_inputs = sum(lags[col] for col in y_cols if col != target_signal)
+
     if model_type == "HONU":
         degree = st.slider("Polynomial degree (1-3):", 1, 3, 1)
         method = st.selectbox("Learning method:", ["LMS", "NGD", "RLS"])
         mu = st.slider("Learning rate μ:", 0.0001, 0.01, 0.001, 0.0001, format="%.4f")
-
-        n_inputs = sum(lags[col] for col in y_cols if col != target_signal)
         model = HONU(degree, n_inputs, mu, method)
 
-    else:
+    elif model_type == "SlidingHONU":
         degree = st.slider("Polynomial degree (1-3):", 1, 3, 1)
         window_size = st.slider("Sliding window size M:", 10, 200, 50, 10)
         lam = st.slider("Regularization λ:", 0.0, 0.1, 0.01, 0.001, format="%.3f")
-
-        n_inputs = sum(lags[col] for col in y_cols if col != target_signal)
         model = SlidingHONU(degree, n_inputs, window_size, lam)
 
-    st.session_state['model'] = model
+    else:
+        n_hidden = st.slider("Number of hidden neurons:", 1, 50, 10)
+        lr = st.slider("Learning rate:", 0.0001, 0.1, 0.01, 0.0001, format="%.4f")
+        model = SimpleMLP([n_inputs, n_hidden, 1], activations=['relu', 'linear'], lr=lr)
 
+    st.session_state['model'] = model
 
     if "train_k" not in st.session_state or not resume_training:
         st.session_state.train_k = max_lag
@@ -71,13 +72,12 @@ def select_model():
     start_k = st.session_state.train_k
     y_pred = np.zeros(N)
     error = np.zeros(N)
-    wall = np.zeros((N, model.n_weights))
-    delta_wall = np.zeros((N, model.n_weights))
+    wall = np.zeros((N, model.n_weights if model_type != "MLP" else model.weights[0].size + model.weights[1].size))
+    delta_wall = np.zeros_like(wall)
     errors_list = []
     eta_est = ETAEstimator()
 
     LM_STEP = 10
-
 
     with st.spinner("Training model..."):
         for k in range(start_k, N):
@@ -90,25 +90,32 @@ def select_model():
                 break
 
             x = build_input_vector(k)
+            y_true = df[target_signal].values[k:k+1]
 
             if model_type == "HONU":
-                err = model.update(x, df[target_signal].values[k])
-            else:  # SlidingHONU
-                model.add_sample(x, df[target_signal].values[k])
+                err = model.update(x.flatten(), y_true[0])
+                y_pred[k] = model.predict(x.flatten())
+                delta_w = model.w - wall[k-1] if k>0 else model.w
+
+            elif model_type == "SlidingHONU":
+                model.add_sample(x.flatten(), y_true[0])
                 if k % LM_STEP == 0:
                     err, delta_w = model.update_LM()
                 else:
                     err = error[k-1] if k > 0 else 0
+                y_pred[k] = model.predict(x.flatten())
 
-            y_pred[k] = model.predict(x)
+            else:
+                y_pred[k] = model.forward(x)
+                err = model.backward(y_true)
+
+                delta_w = np.concatenate([w.flatten() for w in model.weights]) - (wall[k-1] if k>0 else 0)
+
             error[k] = err
             errors_list.append(err)
 
-            wall[k] = model.w
-            if model_type == "HONU":
-                delta_wall[k] = model.w - wall[k-1] if k>0 else model.w
-            else:
-                delta_wall[k] = delta_w if k % LM_STEP == 0 else delta_wall[k-1] if k>0 else np.zeros(model.n_weights)
+            wall[k] = np.concatenate([model.w.flatten()]) if model_type != "MLP" else np.concatenate([w.flatten() for w in model.weights])
+            delta_wall[k] = delta_w
 
             if k % 10 == 0:
                 eta_val = eta_est.eta(N - k)
@@ -126,11 +133,9 @@ def select_model():
         error,
         wall,
         delta_wall,
-        title=f"{model_type} prediction ({method if model_type=='HONU' else 'Sliding LM'})"
+        title=f"{model_type} prediction"
     )
     st.plotly_chart(fig, use_container_width=True)
-
-
 
 def plot_honu_plotly(t, y, y_pred, error, wall, delta_wall, title="HONU"):
     n_weights = wall.shape[1]

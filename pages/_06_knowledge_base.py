@@ -62,7 +62,7 @@ def page6_data_modes():
 
         top_le_idx = np.argsort(le)[-5:]
 
-        from pages.page_4 import compute_saliency
+        from pages._04_saliency_analysis import compute_saliency
         saliency = compute_saliency(model, y_cols, lags, df_rec, target_signal)
         top_saliency_idx = np.argsort(np.sum(saliency, axis=1))[-5:]
 
