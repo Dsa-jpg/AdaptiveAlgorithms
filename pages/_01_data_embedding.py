@@ -5,6 +5,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from pandas import DataFrame
+from pandas.errors import ParserError
 
 from app.processing.normalization import zscore, minmax
 
@@ -14,7 +15,7 @@ def upload_data() -> DataFrame  | None:
     if uploaded:
         try:
             df = pd.read_csv(uploaded)
-        except Exception:
+        except ParserError or ValueError:
             df = pd.read_csv(uploaded, sep=';')
         st.session_state['raw_data'] = df
         return df
@@ -59,13 +60,13 @@ def normalize_signals(df: DataFrame, y_cols: list[str]) -> tuple[DataFrame, str]
 
     return df_plot, scale_mode
 
-
+@st.cache_data
 def build_embedding(df: DataFrame, y_cols: list[str], lags: dict[str, int]) -> DataFrame:
     embedded = pd.DataFrame(index=df.index)
 
-    for col in y_cols:
-        for lag in range(lags[col] + 1):
-            embedded[f"{col}_t-{lag}"] = df[col].shift(lag)
+    for column in y_cols:
+        for lag in range(lags[column] + 1):
+            embedded[f"{column}_t-{lag}"] = df[column].shift(lag)
 
     embedded = embedded.dropna()
     return embedded
@@ -87,6 +88,7 @@ def show_statistics(df: DataFrame, y_cols: list[str]) -> None:
         st.subheader("Correlation Matrix")
         st.dataframe(df[y_cols].corr())
 
+@st.cache_data
 def manual_pca(x_embed: DataFrame, number_components: int)-> DataFrame:
 
     covX = np.corrcoef(x_embed.values.T)
