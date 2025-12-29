@@ -15,7 +15,7 @@ def compute_LE_window(error, window_size=50):
 
 def project_weights_2D(wall, method="PCA"):
     if wall.shape[0] < 2:
-        return np.array([])  # příliš málo vzorků
+        return np.array([])
     if method=="PCA":
         proj = PCA(n_components=2).fit_transform(wall)
     elif method=="t-SNE":
