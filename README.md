@@ -11,7 +11,9 @@ in time-series systems.
 
 The project integrates **online learning**, **model monitoring**, and **interpretable AI**
 with systematic accumulation of knowledge.
+ 
 
+Can be run by following command '''streamlit run main.py'''
 ---
 
 ## Main Features
