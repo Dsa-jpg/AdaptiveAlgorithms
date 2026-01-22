@@ -1,0 +1,4 @@
+# This files serves for configuration of streamlit framework
+[server]
+
+maxUploadSize = 500
