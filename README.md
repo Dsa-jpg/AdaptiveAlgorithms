@@ -13,7 +13,7 @@ The project integrates **online learning**, **model monitoring**, and **interpre
 with systematic accumulation of knowledge.
  
 
-Can be run by following command '''streamlit run main.py'''
+Can be run by following command ```streamlit run main.py```
 ---
 
 ## Main Features
