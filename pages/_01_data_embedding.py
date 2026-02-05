@@ -118,16 +118,23 @@ def main():
         use_pca = st.checkbox("Apply PCA to embedding")
 
         if use_pca:
-            max_components = min(X_embed.shape[1], 20)
-            n_components = st.slider(
-                "Number of principal components",
-                1, max_components, min(5, max_components)
+            total_components = X_embed.shape[1]
+            X_full_pca = pca_manual(X_embed, total_components)
+
+            options = [f"PCA{i + 1}" for i in range(total_components)]
+            selected_components = st.multiselect(
+                "Select PCA components to use:",
+                options,
+                default=options[:5]
             )
-            X_pca = pca_manual(X_embed, n_components)
-            st.dataframe(X_pca.head())
-            st.session_state['X_model'] = X_pca
-        else:
-            st.session_state['X_model'] = X_embed
+
+            if selected_components:
+                X_pca_selected = X_full_pca[selected_components]
+                st.dataframe(X_pca_selected.head())
+                st.session_state['X_model'] = X_pca_selected
+            else:
+                st.warning("No PCA components selected, using all components.")
+                st.session_state['X_model'] = X_full_pca
 
         # Save selection to session_state
         st.session_state['time_col'] = time_col
